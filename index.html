@@ -5,27 +5,34 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>DX Ball Game</title>
   <style>
-    body {
-      background-color: #111;
-      color: white;
-      font-family: Arial, sans-serif;
-      text-align: center;
+    html, body {
       margin: 0;
       padding: 0;
+      height: 100%;
+      background: #111;
+      overflow: hidden;
+      text-align: center;
+      font-family: Arial, sans-serif;
+      color: white;
     }
 
     canvas {
       display: block;
-      margin: 20px auto;
+      margin: 0 auto;
       background-color: black;
       border: 2px solid #fff;
+      touch-action: none;
+    }
+
+    button {
+      font-size: 1rem;
+      margin: 10px 5px;
     }
   </style>
 </head>
 <body>
   <h1>DX Ball Game</h1>
   <canvas id="gameCanvas"></canvas>
-
   <script src="game.js"></script>
 </body>
 </html>

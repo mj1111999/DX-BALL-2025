@@ -24,7 +24,7 @@ bounceSound.volume = 0.8;
 const levelUpSound = new Audio('sounds/next-level-160613.mp3');
 levelUpSound.volume = 0.9;
 
-const gameOverSound = new Audio('sounds/game_over.wav'); // Defined here
+const gameOverSound = new Audio('sounds/game-over-38511.mp3'); // Defined here
 gameOverSound.volume = 0.9;
 
 const bonusCollectedSound = new Audio('sounds/realistic-gun-fire-100696.mp3');

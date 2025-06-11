@@ -1,30 +1,95 @@
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
 
-// Audio setup
-const bounceSound = new Audio("sounds/mixkit-soccer-ball-quick-kick-2108.wav");
-const brickSound = new Audio("sounds/mixkit-glass-break-with-hammer-thud-759.wav");
-const levelSound = new Audio("sounds/next-level-160613.mp3");
-const bonusSound = new Audio("sounds/realistic-gun-fire-100696.mp3");
-const bgMusic = new Audio("sounds/game-music-player-console-8bit-background-intro-theme-297305.mp3");
-bgMusic.loop = true;
-bgMusic.volume = 0.5;
+// Get buttons and modal elements
+const muteButton = document.getElementById("muteButton");
+const pauseButton = document.getElementById("pauseButton");
+const gameModal = document.getElementById("gameModal");
+const modalTitle = document.getElementById("modalTitle");
+const modalMessage = document.getElementById("modalMessage");
+const modalCloseButton = document.getElementById("modalCloseButton");
 
-// Mute button
-const muteButton = document.createElement("button");
-muteButton.style.margin = "10px";
-muteButton.textContent = "🔇 Mute Music";
-document.body.appendChild(muteButton);
-let musicMuted = false;
+// --- Audio Elements ---
+// Create Audio objects for each sound
+const backgroundMusic = new Audio('sounds/game-music-player-console-8bit-background-intro-theme-297305.mp3');
+backgroundMusic.loop = true; // Loop background music
+backgroundMusic.volume = 0.3; // Lower volume for background music
 
+const brickHitSound = new Audio('sounds/mixkit-glass-break-with-hammer-thud-759.wav');
+brickHitSound.volume = 0.7;
+
+const bounceSound = new Audio('sounds/mixkit-soccer-ball-quick-kick-2108.wav');
+bounceSound.volume = 0.8;
+
+const levelUpSound = new Audio('sounds/next-level-160613.mp3');
+levelUpSound.volume = 0.9;
+
+const gameOverSound = new Audio('sounds/game_over.wav'); // Defined here
+gameOverSound.volume = 0.9;
+
+const bonusCollectedSound = new Audio('sounds/realistic-gun-fire-100696.mp3');
+bonusCollectedSound.volume = 0.8;
+
+
+// Audio state
+let gameSoundsMuted = false;
+let bgMusicPlaying = false;
+
+// Function to play sounds
+const playSound = (name) => {
+    if (gameSoundsMuted) {
+        return; // Don't play if muted
+    }
+    switch (name) {
+        case "Brick Hit":
+            brickHitSound.currentTime = 0; // Rewind to start for quick repeated plays
+            brickHitSound.play().catch(e => console.error("Error playing brick hit sound:", e));
+            break;
+        case "Bounce":
+            bounceSound.currentTime = 0;
+            bounceSound.play().catch(e => console.error("Error playing bounce sound:", e));
+            break;
+        case "Level Up":
+            levelUpSound.currentTime = 0;
+            levelUpSound.play().catch(e => console.error("Error playing level up sound:", e));
+            break;
+        case "Game Over": // Case for game over sound
+            gameOverSound.currentTime = 0;
+            gameOverSound.play().catch(e => console.error("Error playing game over sound:", e));
+            break;
+        case "Bonus Collected":
+            bonusCollectedSound.currentTime = 0;
+            bonusCollectedSound.play().catch(e => console.error("Error playing bonus collected sound:", e));
+            break;
+        // Background music is handled separately for autoplay policy
+    }
+};
+
+// Attempt to start background music on first user interaction
 document.addEventListener("click", () => {
-  bgMusic.play().catch((err) => console.warn("Blocked: ", err));
-}, { once: true });
+    if (!bgMusicPlaying && !gameSoundsMuted) {
+        backgroundMusic.play().then(() => {
+            bgMusicPlaying = true;
+            console.log("🎵 Background music started.");
+        }).catch(e => console.error("Error playing background music:", e));
+    }
+}, { once: true }); // Only trigger this listener once
 
+// Mute/Unmute functionality
 muteButton.onclick = () => {
-  musicMuted = !musicMuted;
-  bgMusic.muted = musicMuted;
-  muteButton.textContent = musicMuted ? "🔊 Unmute Music" : "🔇 Mute Music";
+    gameSoundsMuted = !gameSoundsMuted;
+    muteButton.textContent = gameSoundsMuted ? "🔊 Unmute Game Sounds" : "🔇 Mute Game Sounds";
+
+    if (gameSoundsMuted) {
+        backgroundMusic.pause(); // Pause background music when muted
+        console.log("🔇 Game sounds muted.");
+    } else {
+        // Only try to play background music if it was previously playing
+        if (bgMusicPlaying) {
+            backgroundMusic.play().catch(e => console.error("Error resuming background music:", e));
+        }
+        console.log("🔊 Game sounds unmuted.");
+    }
 };
 
 // Game state
@@ -49,183 +114,367 @@ let score = 0;
 let isPaused = false;
 let animationId;
 
+// --- Core Game Functions ---
+
+/**
+ * Resizes the canvas to fit the window and scales game elements.
+ */
 function resizeCanvas() {
-  const dpr = window.devicePixelRatio || 1;
-  const width = window.innerWidth;
-  const height = window.innerHeight - 80;
+    const dpr = window.devicePixelRatio || 1;
+    // Get current window dimensions, subtracting a bit for controls/padding
+    const width = window.innerWidth;
+    const height = window.innerHeight - 150; // Adjust for controls and top padding
 
-  canvas.style.width = width + 'px';
-  canvas.style.height = height + 'px';
-  canvas.width = width * dpr;
-  canvas.height = height * dpr;
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.scale(dpr, dpr);
+    // Set canvas display size (CSS pixels)
+    canvas.style.width = width + 'px';
+    canvas.style.height = height + 'px';
 
-  scaleGame(width, height);
+    // Set canvas internal drawing buffer size (device pixels)
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+
+    // Apply scaling to the context to match device pixel ratio
+    ctx.setTransform(1, 0, 0, 1, 0, 0); // Reset transformation
+    ctx.scale(dpr, dpr);
+
+    // Scale game elements based on the new logical (CSS) dimensions
+    scaleGame(width, height);
 }
 
+/**
+ * Scales game elements based on the given logical width and height.
+ * @param {number} w - Logical width of the canvas.
+ * @param {number} h - Logical height of the canvas.
+ */
 function scaleGame(w, h) {
-  const scale = Math.min(w / 800, h / 600);
+    // Base scale factor, relative to a reference size (e.g., 800x600)
+    const baseRefWidth = 800;
+    const baseRefHeight = 600;
+    const scale = Math.min(w / baseRefWidth, h / baseRefHeight);
 
-  ballRadius = 10 * scale;
-  paddleHeight = 10 * scale;
-  paddleWidth = 75 * scale;
-  dx = (2 + 0.5 * (level - 1)) * scale;
-  dy = (-2 - 0.5 * (level - 1)) * scale;
-  x = w / 2;
-  y = h - 30 * scale;
-  paddleX = (w - paddleWidth) / 2;
+    ballRadius = 10 * scale;
+    paddleHeight = 10 * scale;
+    paddleWidth = 75 * scale;
 
-  brickWidth = 75 * scale;
-  brickHeight = 20 * scale;
+    // Adjust ball speed based on level and scale
+    dx = (2 + 0.5 * (level - 1)) * scale;
+    dy = (-2 - 0.5 * (level - 1)) * scale;
 
-  createBricks();
+    // Re-position ball and paddle based on new canvas size and scale
+    x = w / 2;
+    y = h - 30 * scale; // Keep ball just above paddle
+    paddleX = (w - paddleWidth) / 2; // Center paddle
+
+    brickWidth = 75 * scale;
+    brickHeight = 20 * scale;
+
+    createBricks(); // Recreate bricks with new dimensions
 }
 
+/**
+ * Initializes or re-initializes the brick layout for the current level.
+ * Bricks are either active (status 1) or inactive (status 0).
+ * Some active bricks can have a bonus.
+ */
 function createBricks() {
-  bricks = [];
-  for (let c = 0; c < brickColumnCount; c++) {
-    bricks[c] = [];
-    for (let r = 0; r < brickRowCount; r++) {
-      const status = Math.random() < 0.8 ? 1 : 0;
-      const hasBonus = Math.random() < 0.2;
-      const type = hasBonus ? ["expand", "shrink", "score"][Math.floor(Math.random() * 3)] : null;
-      bricks[c][r] = { x: 0, y: 0, status: status, bonus: hasBonus, type: type };
-    }
-  }
-}
-
-function drawBricks() {
-  for (let c = 0; c < brickColumnCount; c++) {
-    for (let r = 0; r < brickRowCount; r++) {
-      const b = bricks[c][r];
-      if (b.status === 1) {
-        const brickX = c * (brickWidth + brickPadding) + brickOffsetLeft;
-        const brickY = r * (brickHeight + brickPadding) + brickOffsetTop;
-        b.x = brickX;
-        b.y = brickY;
-        ctx.beginPath();
-        ctx.rect(brickX, brickY, brickWidth, brickHeight);
-        ctx.fillStyle = b.bonus ? "#FFD700" : `hsl(${(level * 45 + r * 10) % 360}, 80%, 60%)`;
-        ctx.fill();
-        ctx.closePath();
-      }
-    }
-  }
-}
-
-function drawBall() {
-  ctx.beginPath();
-  ctx.arc(x, y, ballRadius, 0, Math.PI * 2);
-  ctx.fillStyle = "#fff";
-  ctx.fill();
-  ctx.closePath();
-}
-
-function drawPaddle() {
-  ctx.beginPath();
-  ctx.rect(paddleX, canvas.height / window.devicePixelRatio - paddleHeight, paddleWidth, paddleHeight);
-  ctx.fillStyle = "#0095DD";
-  ctx.fill();
-  ctx.closePath();
-}
-
-function drawHUD() {
-  ctx.font = "16px Arial";
-  ctx.fillStyle = "#ffffff";
-  ctx.fillText("Level: " + level + " / " + maxLevel, 8, 20);
-  ctx.fillText("Score: " + score, canvas.width / window.devicePixelRatio - 110, 20);
-}
-
-function collisionDetection() {
-  for (let c = 0; c < brickColumnCount; c++) {
-    for (let r = 0; r < brickRowCount; r++) {
-      const b = bricks[c][r];
-      if (b.status === 1) {
-        if (x > b.x && x < b.x + brickWidth && y > b.y && y < b.y + brickHeight) {
-          dy = -dy;
-          b.status = 0;
-          score++;
-          brickSound.play();
-          if (b.bonus) {
-            bonusSound.play();
-            if (b.type === "expand") paddleWidth *= 1.5;
-            if (b.type === "shrink") paddleWidth *= 0.75;
-            if (b.type === "score") score += 10;
-          }
+    bricks = [];
+    for (let c = 0; c < brickColumnCount; c++) {
+        bricks[c] = [];
+        for (let r = 0; r < brickRowCount; r++) {
+            const status = 1; // All bricks start active
+            const hasBonus = Math.random() < 0.2; // 20% chance for a bonus
+            const type = hasBonus ? ["expand", "shrink", "score"][Math.floor(Math.random() * 3)] : null;
+            bricks[c][r] = { x: 0, y: 0, status: status, bonus: hasBonus, type: type };
         }
-      }
     }
-  }
 }
 
+/**
+ * Draws all active bricks on the canvas.
+ */
+function drawBricks() {
+    for (let c = 0; c < brickColumnCount; c++) {
+        for (let r = 0; r < brickRowCount; r++) {
+            const b = bricks[c][r];
+            if (b.status === 1) { // Only check active bricks
+                // Calculate brick position adjusted for padding and offset
+                const brickX = c * (brickWidth + brickPadding) + brickOffsetLeft;
+                const brickY = r * (brickHeight + brickPadding) + brickOffsetTop;
+                b.x = brickX;
+                b.y = brickY; // Store actual position for collision detection
+
+                ctx.beginPath();
+                ctx.roundRect(brickX, brickY, brickWidth, brickHeight, 5); // Rounded rectangles
+                // Dynamic brick color based on level and row
+                const hue = (level * 45 + r * 10) % 360;
+                ctx.fillStyle = b.bonus ? "#FFD700" : `hsl(${hue}, 80%, 60%)`; // Gold for bonus, HSL for others
+                ctx.fill();
+                ctx.closePath();
+            }
+        }
+    }
+}
+
+/**
+ * Draws the ball on the canvas.
+ */
+function drawBall() {
+    ctx.beginPath();
+    ctx.arc(x, y, ballRadius, 0, Math.PI * 2);
+    ctx.fillStyle = "#fff"; // White ball
+    ctx.fill();
+    ctx.closePath();
+}
+
+/**
+ * Draws the paddle on the canvas.
+ */
+function drawPaddle() {
+    ctx.beginPath();
+    // Paddle is drawn at the bottom, adjusting for device pixel ratio
+    ctx.roundRect(paddleX, canvas.height / window.devicePixelRatio - paddleHeight, paddleWidth, paddleHeight, 5);
+    ctx.fillStyle = "#0095DD"; // Blue paddle
+    ctx.fill();
+    ctx.closePath();
+}
+
+/**
+ * Draws the Heads-Up Display (HUD) showing level and score.
+ */
+function drawHUD() {
+    ctx.font = "bold 18px 'Inter'"; // Slightly larger, bold font
+    ctx.fillStyle = "#ffffff"; // White text
+    ctx.textAlign = "left";
+    ctx.fillText(`Level: ${level} / ${maxLevel}`, 8, 20); // Top-left
+    ctx.textAlign = "right";
+    // Adjust position for score based on canvas width and device pixel ratio
+    ctx.fillText(`Score: ${score}`, canvas.width / window.devicePixelRatio - 8, 20); // Top-right
+}
+
+/**
+ * Handles collision detection between the ball and bricks.
+ */
+function collisionDetection() {
+    for (let c = 0; c < brickColumnCount; c++) {
+        for (let r = 0; r < brickRowCount; r++) {
+            const b = bricks[c][r];
+            if (b.status === 1) { // Only check active bricks
+                // Check if ball's center is within brick's bounds
+                if (x > b.x && x < b.x + brickWidth && y > b.y && y < b.y + brickHeight) {
+                    dy = -dy; // Reverse ball direction
+                    b.status = 0; // Mark brick as hit
+                    score++; // Increase score
+                    playSound("Brick Hit"); // Play brick sound
+                    if (b.bonus) {
+                        playSound("Bonus Collected"); // Play bonus sound
+                        if (b.type === "expand") paddleWidth = Math.min(paddleWidth * 1.5, canvas.width / window.devicePixelRatio * 0.8); // Max 80% width
+                        if (b.type === "shrink") paddleWidth = Math.max(paddleWidth * 0.75, 30); // Min 30px width
+                        if (b.type === "score") score += 10; // Bonus points
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Checks if the current level is complete and advances to the next level or ends the game.
+ */
 function checkLevelComplete() {
-  for (let c = 0; c < brickColumnCount; c++) {
-    for (let r = 0; r < brickRowCount; r++) {
-      if (bricks[c][r].status === 1) return;
+    // Check if any active bricks remain
+    for (let c = 0; c < brickColumnCount; c++) {
+        for (let r = 0; r < brickRowCount; r++) {
+            if (bricks[c][r].status === 1) return; // Level not complete
+        }
     }
-  }
 
-  if (level >= maxLevel) {
-    alert("🎉 Congratulations! You've completed all 100 levels!");
-    document.location.reload();
-    return;
-  }
+    // If all bricks are cleared
+    if (level >= maxLevel) {
+        showModal("🎉 Congratulations!", "You've completed all 100 levels! Amazing job!", true);
+        return;
+    }
 
-  levelSound.play();
-  setTimeout(() => {
-    level++;
-    if (level % 3 === 0 && brickRowCount < 6) brickRowCount++;
-    scaleGame(window.innerWidth, window.innerHeight);
-  }, 500);
+    playSound("Level Up"); // Play level sound
+    isPaused = true; // Pause game temporarily for level transition
+    setTimeout(() => {
+        level++; // Increment level
+        if (level % 3 === 0 && brickRowCount < 6) brickRowCount++; // Add a new row of bricks every 3 levels
+        scaleGame(window.innerWidth, window.innerHeight - 150); // Re-initialize game state for new level
+        isPaused = false; // Resume game
+        // If animation was stopped by pause, restart it
+        if (!animationId) draw();
+    }, 1000); // Wait 1 second before next level
 }
 
+/**
+ * The main game drawing and update loop.
+ */
 function draw() {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  drawBricks();
-  drawBall();
-  drawPaddle();
-  drawHUD();
-  collisionDetection();
-  checkLevelComplete();
-
-  if (x + dx > canvas.width / window.devicePixelRatio - ballRadius || x + dx < ballRadius) {
-    dx = -dx;
-    bounceSound.play();
-  }
-
-  if (y + dy < ballRadius) {
-    dy = -dy;
-    bounceSound.play();
-  } else if (y + dy > canvas.height / window.devicePixelRatio - ballRadius) {
-    if (x > paddleX && x < paddleX + paddleWidth) {
-      dy = -dy;
-      bounceSound.play();
-    } else {
-      alert("Game Over! Reloading...");
-      document.location.reload();
+    if (isPaused) {
+        animationId = null; // Ensure animation stops if paused
+        return;
     }
-  }
 
-  if (rightPressed && paddleX < canvas.width / window.devicePixelRatio - paddleWidth) paddleX += 7;
-  else if (leftPressed && paddleX > 0) paddleX -= 7;
+    ctx.clearRect(0, 0, canvas.width, canvas.height); // Clear the canvas
 
-  x += dx;
-  y += dy;
+    drawBricks();
+    drawBall();
+    drawPaddle();
+    drawHUD();
+    collisionDetection();
+    checkLevelComplete();
 
-  if (!isPaused) animationId = requestAnimationFrame(draw);
+    // Ball movement logic: bounce off walls
+    if (x + dx > canvas.width / window.devicePixelRatio - ballRadius || x + dx < ballRadius) {
+        dx = -dx;
+        playSound("Bounce"); // Play bounce sound
+    }
+    if (y + dy < ballRadius) {
+        dy = -dy;
+        playSound("Bounce"); // Play bounce sound
+    } else if (y + dy > canvas.height / window.devicePixelRatio - ballRadius - paddleHeight) {
+        // Check collision with paddle
+        if (x > paddleX && x < paddleX + paddleWidth) {
+            dy = -dy; // Reverse direction
+            // Optional: adjust ball angle based on where it hits the paddle
+            const hitPoint = (x - paddleX) / paddleWidth; // 0 to 1
+            dx = (hitPoint - 0.5) * (dx > 0 ? 1 : -1) * (2 + 0.5 * (level - 1)); // Adjust angle and speed
+            playSound("Bounce"); // Play bounce sound
+        } else if (y + dy > canvas.height / window.devicePixelRatio - ballRadius) {
+            // Ball hit the bottom (missed paddle)
+            showModal("Game Over!", "You missed the ball! Try again?", false);
+            return; // Stop game loop immediately
+        }
+    }
+
+    // Paddle movement logic (keyboard)
+    const paddleSpeed = 7; // Fixed paddle speed for keyboard
+    if (rightPressed && paddleX < canvas.width / window.devicePixelRatio - paddleWidth) {
+        paddleX += paddleSpeed;
+    } else if (leftPressed && paddleX > 0) {
+        paddleX -= paddleSpeed;
+    }
+
+    // Update ball position
+    x += dx;
+    y += dy;
+
+    // Request next frame
+    animationId = requestAnimationFrame(draw);
 }
 
+// --- Event Listeners ---
+
+// Keyboard controls for paddle
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Right" || e.key === "ArrowRight") rightPressed = true;
-  else if (e.key === "Left" || e.key === "ArrowLeft") leftPressed = true;
+    if (e.key === "Right" || e.key === "ArrowRight") rightPressed = true;
+    else if (e.key === "Left" || e.key === "ArrowLeft") leftPressed = true;
 });
 
 document.addEventListener("keyup", (e) => {
-  if (e.key === "Right" || e.key === "ArrowRight") rightPressed = false;
-  else if (e.key === "Left" || e.key === "ArrowLeft") leftPressed = false;
+    if (e.key === "Right" || e.key === "ArrowRight") rightPressed = false;
+    else if (e.key === "Left" || e.key === "ArrowLeft") leftPressed = false;
 });
 
+// Touch controls for paddle (mobile)
+let touchStartPaddleX = 0; // Where the touch started on the paddle
+let touchStartX = 0; // Where the touch started on the screen
+
+canvas.addEventListener("touchstart", (e) => {
+    e.preventDefault(); // Prevent scrolling/zooming
+    if (e.touches.length > 0) {
+        const touch = e.touches[0];
+        touchStartX = touch.clientX;
+        // Calculate where the touch is relative to the paddle's current center
+        touchStartPaddleX = paddleX + paddleWidth / 2;
+    }
+}, { passive: false }); // passive: false to allow preventDefault
+
+canvas.addEventListener("touchmove", (e) => {
+    e.preventDefault(); // Prevent scrolling/zooming
+    if (e.touches.length > 0) {
+        const touch = e.touches[0];
+        const deltaX = touch.clientX - touchStartX;
+        let newPaddleX = touchStartPaddleX + deltaX - paddleWidth / 2;
+
+        // Clamp paddleX to stay within canvas bounds
+        newPaddleX = Math.max(0, Math.min(newPaddleX, canvas.width / window.devicePixelRatio - paddleWidth));
+        paddleX = newPaddleX;
+    }
+}, { passive: false });
+
+canvas.addEventListener("touchend", (e) => {
+    e.preventDefault(); // Prevent scrolling/zooming
+    // Stop any further touch-based movement if desired, though `touchmove` handles continuous updates
+}, { passive: false });
+
+// Pause/Resume functionality
+pauseButton.onclick = () => {
+    isPaused = !isPaused;
+    pauseButton.textContent = isPaused ? "▶️ Resume" : "⏸️ Pause";
+    if (!isPaused) {
+        draw(); // Resume animation loop
+        console.log("Game Resumed");
+        if (bgMusicPlaying && !gameSoundsMuted) {
+            backgroundMusic.play().catch(e => console.error("Error resuming background music:", e));
+        }
+    } else {
+        cancelAnimationFrame(animationId); // Stop current animation frame
+        animationId = null; // Clear animation ID
+        backgroundMusic.pause(); // Pause background music when game is paused
+        console.log("Game Paused");
+    }
+};
+
+// --- Custom Modal Logic ---
+
+/**
+ * Shows a custom modal with a title and message.
+ * @param {string} title - The title for the modal.
+ * @param {string} message - The message content for the modal.
+ * @param {boolean} winCondition - True if it's a win, false for game over.
+ */
+function showModal(title, message, winCondition) {
+    isPaused = true; // Pause the game
+    cancelAnimationFrame(animationId);
+    animationId = null;
+    backgroundMusic.pause(); // Pause background music on game over/win
+
+    if (!gameSoundsMuted) {
+        if (!winCondition) {
+            playSound("Game Over"); // <<< ADDED THIS LINE!
+        }
+        // Could add a specific win sound here if you have one
+    }
+
+    modalTitle.textContent = title;
+    modalMessage.textContent = message;
+    gameModal.style.display = "flex"; // Show the modal
+
+    modalCloseButton.onclick = () => {
+        gameModal.style.display = "none"; // Hide the modal
+        // Reset game state for a new game
+        level = 1;
+        score = 0;
+        brickRowCount = 3; // Reset brick count for new game
+        resizeCanvas(); // Re-initialize all dimensions and bricks
+        isPaused = false; // Unpause
+        draw(); // Restart game loop
+        console.log("Game Restarted");
+        if (!gameSoundsMuted) {
+            // Restart background music only if it was playing and not muted
+            backgroundMusic.currentTime = 0; // Rewind for new game
+            backgroundMusic.play().catch(e => console.error("Error restarting background music:", e));
+        }
+    };
+}
+
+// --- Initial Setup ---
+
+// Resize canvas on window load and any subsequent resize
+window.addEventListener("load", resizeCanvas);
 window.addEventListener("resize", resizeCanvas);
-resizeCanvas();
-draw();
+
+// Initial game start
+resizeCanvas(); // Set up initial canvas size and game elements
+draw(); // Start the game loop

@@ -24,11 +24,15 @@ bounceSound.volume = 0.8;
 const levelUpSound = new Audio('sounds/next-level-160613.mp3');
 levelUpSound.volume = 0.9;
 
-const gameOverSound = new Audio('sounds/game-over-38511.mp3'); // Defined here
+const gameOverSound = new Audio('sounds/game-over-38511.mp3');
 gameOverSound.volume = 0.9;
 
 const bonusCollectedSound = new Audio('sounds/realistic-gun-fire-100696.mp3');
 bonusCollectedSound.volume = 0.8;
+
+// NEW: Invisible block reveal sound
+const invisibleRevealSound = new Audio('sounds/metal-whoosh-hit-10-202176.mp3');
+invisibleRevealSound.volume = 0.6; // Adjust volume as needed
 
 
 // Audio state
@@ -53,13 +57,17 @@ const playSound = (name) => {
             levelUpSound.currentTime = 0;
             levelUpSound.play().catch(e => console.error("Error playing level up sound:", e));
             break;
-        case "Game Over": // Case for game over sound
+        case "Game Over":
             gameOverSound.currentTime = 0;
             gameOverSound.play().catch(e => console.error("Error playing game over sound:", e));
             break;
         case "Bonus Collected":
             bonusCollectedSound.currentTime = 0;
             bonusCollectedSound.play().catch(e => console.error("Error playing bonus collected sound:", e));
+            break;
+        case "Invisible Reveal": // NEW CASE
+            invisibleRevealSound.currentTime = 0;
+            invisibleRevealSound.play().catch(e => console.error("Error playing invisible reveal sound:", e));
             break;
         // Background music is handled separately for autoplay policy
     }
@@ -173,15 +181,22 @@ function scaleGame(w, h) {
 
 /**
  * Initializes or re-initializes the brick layout for the current level.
- * Bricks are either active (status 1) or inactive (status 0).
+ * Bricks are either active (status 1), invisible (status 2), or inactive (status 0).
  * Some active bricks can have a bonus.
  */
 function createBricks() {
     bricks = [];
+    // Adjust the probability for invisible blocks here (e.g., 0.15 for 15%)
+    const invisibleBlockChance = 0.15 + (level * 0.01); // Slightly increase chance with level
     for (let c = 0; c < brickColumnCount; c++) {
         bricks[c] = [];
         for (let r = 0; r < brickRowCount; r++) {
-            const status = 1; // All bricks start active
+            let status = 1; // Default to active
+            const isInvisible = Math.random() < invisibleBlockChance;
+            if (isInvisible) {
+                status = 2; // Set status to 2 for invisible bricks
+            }
+
             const hasBonus = Math.random() < 0.2; // 20% chance for a bonus
             const type = hasBonus ? ["expand", "shrink", "score"][Math.floor(Math.random() * 3)] : null;
             bricks[c][r] = { x: 0, y: 0, status: status, bonus: hasBonus, type: type };
@@ -190,13 +205,14 @@ function createBricks() {
 }
 
 /**
- * Draws all active bricks on the canvas.
+ * Draws all active and visible bricks on the canvas.
  */
 function drawBricks() {
     for (let c = 0; c < brickColumnCount; c++) {
         for (let r = 0; r < brickRowCount; r++) {
             const b = bricks[c][r];
-            if (b.status === 1) { // Only check active bricks
+            // Only draw if status is 1 (visible and active)
+            if (b.status === 1) {
                 // Calculate brick position adjusted for padding and offset
                 const brickX = c * (brickWidth + brickPadding) + brickOffsetLeft;
                 const brickY = r * (brickHeight + brickPadding) + brickOffsetTop;
@@ -258,19 +274,31 @@ function collisionDetection() {
     for (let c = 0; c < brickColumnCount; c++) {
         for (let r = 0; r < brickRowCount; r++) {
             const b = bricks[c][r];
-            if (b.status === 1) { // Only check active bricks
+            // Only check active (status 1) or invisible (status 2) bricks
+            if (b.status === 1 || b.status === 2) {
                 // Check if ball's center is within brick's bounds
                 if (x > b.x && x < b.x + brickWidth && y > b.y && y < b.y + brickHeight) {
                     dy = -dy; // Reverse ball direction
-                    b.status = 0; // Mark brick as hit
-                    score++; // Increase score
-                    playSound("Brick Hit"); // Play brick sound
-                    if (b.bonus) {
-                        playSound("Bonus Collected"); // Play bonus sound
-                        if (b.type === "expand") paddleWidth = Math.min(paddleWidth * 1.5, canvas.width / window.devicePixelRatio * 0.8); // Max 80% width
-                        if (b.type === "shrink") paddleWidth = Math.max(paddleWidth * 0.75, 30); // Min 30px width
-                        if (b.type === "score") score += 10; // Bonus points
+
+                    if (b.status === 2) {
+                        // If it's an invisible brick, make it visible and play reveal sound
+                        b.status = 1; // Change status to visible (active)
+                        playSound("Invisible Reveal");
+                        // Don't increase score on reveal, only on actual break
+                    } else if (b.status === 1) {
+                        // If it's a visible brick, break it
+                        b.status = 0; // Mark brick as hit (inactive)
+                        score++; // Increase score
+                        playSound("Brick Hit"); // Play brick sound
+                        if (b.bonus) {
+                            playSound("Bonus Collected"); // Play bonus sound
+                            if (b.type === "expand") paddleWidth = Math.min(paddleWidth * 1.5, canvas.width / window.devicePixelRatio * 0.8); // Max 80% width
+                            if (b.type === "shrink") paddleWidth = Math.max(paddleWidth * 0.75, 30); // Min 30px width
+                            if (b.type === "score") score += 10; // Bonus points
+                        }
                     }
+                    // Break out of the inner loop once a collision is detected and handled
+                    return;
                 }
             }
         }
@@ -281,14 +309,14 @@ function collisionDetection() {
  * Checks if the current level is complete and advances to the next level or ends the game.
  */
 function checkLevelComplete() {
-    // Check if any active bricks remain
+    // Check if any active (status 1) or invisible (status 2) bricks remain
     for (let c = 0; c < brickColumnCount; c++) {
         for (let r = 0; r < brickRowCount; r++) {
-            if (bricks[c][r].status === 1) return; // Level not complete
+            if (bricks[c][r].status === 1 || bricks[c][r].status === 2) return; // Level not complete
         }
     }
 
-    // If all bricks are cleared
+    // If all bricks are cleared (status 0)
     if (level >= maxLevel) {
         showModal("🎉 Congratulations!", "You've completed all 100 levels! Amazing job!", true);
         return;
@@ -321,7 +349,7 @@ function draw() {
     drawBall();
     drawPaddle();
     drawHUD();
-    collisionDetection();
+    collisionDetection(); // Call collision detection before ball movement
     checkLevelComplete();
 
     // Ball movement logic: bounce off walls
@@ -442,7 +470,7 @@ function showModal(title, message, winCondition) {
 
     if (!gameSoundsMuted) {
         if (!winCondition) {
-            playSound("Game Over"); // <<< ADDED THIS LINE!
+            playSound("Game Over");
         }
         // Could add a specific win sound here if you have one
     }
